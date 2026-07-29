@@ -24,7 +24,9 @@ PALETTE = {
     "jax gpu": "#065A09",
     "cupy gpu": "#9B28AF",
 }
-LINESTYLES = {"current": "-", "baseline": "--"}
+# Styles follow the order the variants are given in, so the first one drawn is dashed
+# and the one compared against it is solid.
+LINESTYLES = ["--", "-", ":", "-."]
 
 
 def load_series(mirror, fn, variants):
@@ -83,7 +85,10 @@ def figure(mirror, fn, variants):
         for (xp, device), by_variant in sorted(series.items()):
             if xp != framework:
                 continue
-            for variant, timings in sorted(by_variant.items()):
+            for index, variant in enumerate(variants):
+                if variant not in by_variant:
+                    continue
+                timings = by_variant[variant]
                 sizes = sorted(timings, key=int)
                 ax.errorbar(
                     [int(n) for n in sizes],
@@ -91,7 +96,7 @@ def figure(mirror, fn, variants):
                     yerr=[np.std(timings[n]) for n in sizes],
                     label=f"{xp} {device} {variant}",
                     color=colors[f"{xp} {device}"],
-                    linestyle=LINESTYLES.get(variant, ":"),
+                    linestyle=LINESTYLES[index % len(LINESTYLES)],
                     marker="o",
                     capsize=5,
                 )
@@ -107,6 +112,17 @@ def figure(mirror, fn, variants):
     fig.suptitle(f"{mirror.replace('/', '.')}.{fn}")
     fig.tight_layout()
     return fig
+
+
+def save(figure, mirror, fn):
+    """Write one figure as png and svg, returning the paths."""
+    paths = []
+    for fmt in ("png", "svg"):
+        path = figure_path(mirror, fn, fmt)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        figure.savefig(path, format=fmt)
+        paths.append(path)
+    return paths
 
 
 def plot(mirror, fns, variants):
@@ -125,10 +141,6 @@ def plot(mirror, fns, variants):
         fig = figure(mirror, fn, variants)
         if fig is None:
             continue
-        for fmt in ("png", "svg"):
-            path = figure_path(mirror, fn, fmt)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            fig.savefig(path, format=fmt)
-            paths.append(path)
+        paths += save(fig, mirror, fn)
         plt.close(fig)
     return paths

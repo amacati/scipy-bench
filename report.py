@@ -90,13 +90,21 @@ def report(mirror, fns, variants):
     directory = core.ROOT / "reports" / mirror
     directory.mkdir(parents=True, exist_ok=True)
 
-    body, cases, sizes, figures = [], [], set(), []
+    body, cases, sizes, pdf = [], [], set(), None
     for fn in fns:
         series = plots.load_series(mirror, fn, variants)
         if not series:
             continue
         cases.append(fn)
-        figures.append(plots.figure(mirror, fn, variants))
+        # One figure per case feeds the png and svg the summary links to and the pdf,
+        # then is closed straight away. Holding them all open until the end costs memory
+        # and trips matplotlib's open figure warning.
+        if pdf is None:
+            pdf = PdfPages(directory / "benchmark.pdf")
+        figure = plots.figure(mirror, fn, variants)
+        plots.save(figure, mirror, fn)
+        pdf.savefig(figure)
+        plt.close(figure)
         png = plots.figure_path(mirror, fn, "png")
         body += [f"## {fn}", "", f"![{fn}]({os.path.relpath(png, directory)})", ""]
         for config in sorted(series):
@@ -110,9 +118,6 @@ def report(mirror, fns, variants):
 
     summary = directory / "summary.md"
     summary.write_text("\n".join(_header(mirror, variants, cases, sizes) + body))
-    if figures:
-        with PdfPages(directory / "benchmark.pdf") as pdf:
-            for fig in figures:
-                pdf.savefig(fig)
-                plt.close(fig)
+    if pdf is not None:
+        pdf.close()
     return summary
