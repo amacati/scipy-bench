@@ -23,7 +23,7 @@ the code you are standing on:
 
 ```bash
 cd ~/repos/scipy
-BENCH="pixi run -e all-frameworks spin run --build-dir=build-all-frameworks python ~/repos/scipy-bench/scipy_bench/bench.py"
+BENCH="pixi run -e all-frameworks spin run --build-dir=build-all-frameworks python $HOME/repos/scipy-bench/scipy_bench/bench.py"
 
 $BENCH list                                          # what can be measured
 $BENCH run    --module spatial/distance --variant xp # measure
