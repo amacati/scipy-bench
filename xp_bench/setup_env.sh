@@ -9,12 +9,13 @@
 # This environment is deliberately not upstreamable, so its manifest block is not
 # committed and disappears on every sync from main. Re-run this script afterwards.
 # It is idempotent and safe to run on a fresh checkout of any branch.
+#
+# Run it from the scipy repository, whose manifest it edits. The harness itself lives
+# outside that repository, so it takes the workspace from the working directory.
 set -euo pipefail
-cd "$(dirname "$0")/.."
 
 MANIFEST=$(pixi info --json | python3 -c 'import json, sys
 print(json.load(sys.stdin)["project_info"]["manifest_path"])')
-ROOT=$(dirname "$MANIFEST")
 echo "workspace manifest: $MANIFEST"
 
 # matplotlib is needed for the plots and the PDF report and is not a dependency of
@@ -37,16 +38,6 @@ FEATURES=(
 echo "declaring the all-frameworks environment"
 pixi workspace environment add --manifest-path "$MANIFEST" all-frameworks \
   "${FEATURES[@]/#/--feature=}" --solve-group all-frameworks --force
-
-# The rule goes in .git/info/exclude rather than .gitignore because that file is per
-# clone instead of per branch. A tracked .gitignore that differs between branches is
-# itself a local modification, which blocks switching, and an ignored xp_bench/ is what
-# lets checkout replace the harness when moving to the branch that tracks it.
-EXCLUDE="$(git -C "$ROOT" rev-parse --git-dir)/info/exclude"
-if ! grep -qxF 'xp_bench/' "$EXCLUDE"; then
-  echo "ignoring xp_bench/ via $EXCLUDE"
-  printf 'xp_bench/\n' >> "$EXCLUDE"
-fi
 
 pixi install --manifest-path "$MANIFEST" -e all-frameworks
 

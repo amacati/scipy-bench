@@ -9,7 +9,7 @@ timings are stored so plots and reports can be regenerated without re-running.
 Set the environment up once on a fresh checkout of any branch.
 
 ```bash
-xp_bench/setup_env.sh
+cd /path/to/scipy && ~/scipy-bench/xp_bench/setup_env.sh
 ```
 
 The script declares the `all-frameworks` pixi environment, installs it and prints a
@@ -21,7 +21,7 @@ The benchmarks import scipy, so they only mean anything against a build.
 
 ```bash
 pixi run -e all-frameworks spin run --build-dir=build-all-frameworks \
-    python xp_bench/bench.py run --module spatial/distance
+    python ~/scipy-bench/xp_bench/bench.py run --module spatial/distance
 ```
 
 `spin run` rebuilds before it executes, so the numbers always come from the working
@@ -63,16 +63,16 @@ Measure the reference on main, measure the change on the feature branch, then co
 ```bash
 git switch main
 pixi run -e all-frameworks spin run --build-dir=build-all-frameworks \
-    python xp_bench/bench.py run --module spatial/distance --variant baseline
+    python ~/scipy-bench/xp_bench/bench.py run --module spatial/distance --variant baseline
 
 git switch my-feature
 pixi run -e all-frameworks spin run --build-dir=build-all-frameworks \
-    python xp_bench/bench.py run --module spatial/distance --variant current
+    python ~/scipy-bench/xp_bench/bench.py run --module spatial/distance --variant current
 
 pixi run -e all-frameworks spin run --build-dir=build-all-frameworks \
-    python xp_bench/bench.py plot --module spatial/distance
+    python ~/scipy-bench/xp_bench/bench.py plot --module spatial/distance
 pixi run -e all-frameworks spin run --build-dir=build-all-frameworks \
-    python xp_bench/bench.py report --module spatial/distance
+    python ~/scipy-bench/xp_bench/bench.py report --module spatial/distance
 ```
 
 `plot` and `report` read nothing but the stored json, so they can be re-run at any
@@ -203,7 +203,7 @@ and significance tests then reflect the variation that actually matters.
 ```bash
 for i in $(seq 20); do
     pixi run -e all-frameworks spin run --build-dir=build-all-frameworks \
-        python xp_bench/bench.py run --module spatial/transform/rotation \
+        python ~/scipy-bench/xp_bench/bench.py run --module spatial/transform/rotation \
         --fn as_rotvec --xp jax --device gpu --low 3 --high 3 --append
 done
 ```

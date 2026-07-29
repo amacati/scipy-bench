@@ -4,10 +4,10 @@ r"""Single entry point for the scipy array API benchmarks.
 The benchmarks time the scipy you built, so they run through spin:
 
     pixi run -e all-frameworks spin run --build-dir=build-all-frameworks \
-        python xp_bench/bench.py run --module spatial/transform/rotation \
+        python ~/scipy-bench/xp_bench/bench.py run --module spatial/transform/rotation \
         --fn as_rotvec --xp jax --device gpu --low 0 --high 5 --variant baseline
 
-Run `xp_bench/bench.py --help` for the subcommands. Every path this writes mirrors the
+Run `bench.py --help` for the subcommands. Every path this writes mirrors the
 scipy module tree, so spatial/distance results land in results/spatial/distance.
 """
 
