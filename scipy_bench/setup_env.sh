@@ -1,5 +1,5 @@
 #!/bin/bash
-# One-shot setup for the xp_bench cross-backend benchmarks.
+# One-shot setup for the scipy_bench cross-backend benchmarks.
 #
 # Builds the `all-frameworks` pixi environment: numpy plus GPU torch, jax and cupy
 # in a single solve group, so all four backends can be timed in one process. jaxlib

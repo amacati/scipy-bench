@@ -1,4 +1,4 @@
-"""Case registry. Suites under xp_bench/suites mirror the scipy module tree."""
+"""Case registry. Suites under scipy_bench/suites mirror the scipy module tree."""
 
 import importlib
 from functools import partial
@@ -10,7 +10,7 @@ _cases = {}
 
 
 def mirror_of(module):
-    """Scipy module path a suite mirrors, so xp_bench.suites.spatial.distance is spatial/distance."""
+    """Scipy module path a suite mirrors, so scipy_bench.suites.spatial.distance is spatial/distance."""
     return module.split(".", 2)[2].replace(".", "/")
 
 

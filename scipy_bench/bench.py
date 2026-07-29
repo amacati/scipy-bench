@@ -4,7 +4,7 @@ r"""Single entry point for the scipy array API benchmarks.
 The benchmarks time the scipy you built, so they run through spin:
 
     pixi run -e all-frameworks spin run --build-dir=build-all-frameworks \
-        python ~/scipy-bench/xp_bench/bench.py run --module spatial/transform/rotation \
+        python ~/repos/scipy-bench/scipy_bench/bench.py run --module spatial/transform/rotation \
         --fn as_rotvec --xp jax --device gpu --low 0 --high 5 --variant baseline
 
 Run `bench.py --help` for the subcommands. Every path this writes mirrors the
@@ -23,7 +23,7 @@ from pathlib import Path  # noqa: E402
 # shadow the built scipy that spin puts on the path ahead of us.
 sys.path.append(str(Path(__file__).parent.parent))
 
-from xp_bench import core, registry  # noqa: E402
+from scipy_bench import core, registry  # noqa: E402
 
 
 def _modules(module):
@@ -57,7 +57,7 @@ def run(args):
 
 
 def plot(args):
-    from xp_bench import plots
+    from scipy_bench import plots
 
     for mirror, cases in _modules(args.module).items():
         for path in plots.plot(mirror, _names(cases, args.fn), args.variant):
@@ -65,7 +65,7 @@ def plot(args):
 
 
 def report(args):
-    from xp_bench import report as report_module
+    from scipy_bench import report as report_module
 
     for mirror, cases in _modules(args.module).items():
         print(report_module.report(mirror, _names(cases, args.fn), args.variant))

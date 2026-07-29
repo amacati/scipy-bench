@@ -1,6 +1,6 @@
 """Timing engine, backend helpers and result storage shared by every suite.
 
-Read xp_bench/README.md before changing anything in here. The timing contract is
+Read scipy_bench/README.md before changing anything in here. The timing contract is
 subtle and the numbers on disk are only comparable while it holds.
 """
 

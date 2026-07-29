@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from scipy.spatial.transform import Rotation as R
 
-from xp_bench import device_of, register, to_xp
+from scipy_bench import device_of, register, to_xp
 
 from . import _pytree  # noqa: F401  registers Rotation and RigidTransform with jax
 

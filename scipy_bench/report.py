@@ -12,7 +12,7 @@ import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
 from scipy.stats import mannwhitneyu
 
-from xp_bench import core, plots
+from scipy_bench import core, plots
 
 COLUMNS = "|---:|---:|---:|---:|---:|---:|---:|---:|:--|"
 

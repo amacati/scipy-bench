@@ -6,7 +6,7 @@ import jax
 import numpy as np
 from scipy.spatial import distance
 
-from xp_bench import device_of, register, to_xp
+from scipy_bench import device_of, register, to_xp
 
 N_FEATURES = 10  # feature dimension of the observation matrices of pdist and cdist
 

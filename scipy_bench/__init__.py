@@ -1,10 +1,10 @@
 """Array API benchmark framework for scipy.
 
-Suites live in xp_bench/suites and mirror the scipy module tree. Each registers cases
+Suites live in scipy_bench/suites and mirror the scipy module tree. Each registers cases
 that the runner times across numpy, torch, jax and cupy on cpu and gpu.
 """
 
-from xp_bench.core import (
+from scipy_bench.core import (
     DEVICES,
     FRAMEWORKS,
     SKIP_XP_DEVICES,
@@ -18,7 +18,7 @@ from xp_bench.core import (
     to_numpy,
     to_xp,
 )
-from xp_bench.registry import discover, register
+from scipy_bench.registry import discover, register
 
 __all__ = [
     "DEVICES",

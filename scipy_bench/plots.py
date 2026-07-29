@@ -12,7 +12,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 
-from xp_bench import core
+from scipy_bench import core
 
 matplotlib.use("Agg")
 

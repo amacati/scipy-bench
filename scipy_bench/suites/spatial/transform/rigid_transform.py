@@ -7,7 +7,7 @@ from scipy._lib._array_api import array_namespace
 from scipy.spatial.transform import RigidTransform
 from scipy.spatial.transform import Rotation as R
 
-from xp_bench import device_of, register
+from scipy_bench import device_of, register
 
 from . import _pytree  # noqa: F401  registers Rotation and RigidTransform with jax
 from .rotation import random_data

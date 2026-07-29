@@ -1,5 +1,5 @@
-xp_bench/results/
-xp_bench/plots/
-xp_bench/reports/
-xp_bench/prototypes/
+scipy_bench/results/
+scipy_bench/plots/
+scipy_bench/reports/
+scipy_bench/prototypes/
 __pycache__/
