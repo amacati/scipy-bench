@@ -45,7 +45,6 @@ def run(args):
     for mirror, cases in _modules(args.module).items():
         core.sweep(
             mirror,
-            cases,
             _names(cases, args.fn),
             [args.xp] if args.xp else core.FRAMEWORKS,
             [args.device] if args.device else core.DEVICES,
@@ -56,6 +55,7 @@ def run(args):
             args.variant,
             args.append,
             args.base,
+            args.float64,
         )
 
 

@@ -102,15 +102,15 @@ def _pair_case(call, dtype, jittable):
     """Case builder for a two-vector scalar metric, scaling the vector length."""
 
     def build(xp, device, n_samples):
-        u, v, jfn = None, None, None
+        u, v = None, None
+        jfn = jax.jit(call) if xp == "jax" and jittable else None
 
         def setup():
-            nonlocal u, v, jfn
+            nonlocal u, v
             u = create_vector(xp, device, n_samples, dtype)
             v = create_vector(xp, device, n_samples, dtype)
             assert device_of(u) == device, f"setup on {device_of(u)}, want {device}"
-            if xp == "jax" and jittable:
-                jfn = jax.jit(call)
+            if jfn is not None:
                 jax.block_until_ready(jfn(u, v))
 
         def test():
@@ -197,14 +197,16 @@ def seuclidean(xp, device, n_samples):
 
 
 def pdist(n_features, xp, device, n_samples):
-    X, jfn = None, None
+    X = None
+    # Built once per case, not per repeat: a fresh jax.jit brings an empty compilation
+    # cache with it, and XLA autotunes every shape it has not seen
+    jfn = jax.jit(distance.pdist) if xp == "jax" else None
 
     def setup():
-        nonlocal X, jfn
+        nonlocal X
         X = create_matrix(xp, device, n_samples, n_features)
         assert device_of(X) == device, f"setup on {device_of(X)}, want {device}"
         if xp == "jax":
-            jfn = jax.jit(distance.pdist)
             check_float64(jax.block_until_ready(jfn(X)))
 
     def test():
@@ -217,15 +219,15 @@ def pdist(n_features, xp, device, n_samples):
 
 
 def cdist(n_features, xp, device, n_samples):
-    XA, XB, jfn = None, None, None
+    XA, XB = None, None
+    jfn = jax.jit(distance.cdist) if xp == "jax" else None
 
     def setup():
-        nonlocal XA, XB, jfn
+        nonlocal XA, XB
         XA = create_matrix(xp, device, n_samples, n_features)
         XB = create_matrix(xp, device, n_samples, n_features)
         assert device_of(XA) == device, f"setup on {device_of(XA)}, want {device}"
         if xp == "jax":
-            jfn = jax.jit(distance.cdist)
             check_float64(jax.block_until_ready(jfn(XA, XB)))
 
     def test():

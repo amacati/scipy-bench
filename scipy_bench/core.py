@@ -5,7 +5,10 @@ subtle and the numbers on disk are only comparable while it holds.
 """
 
 import json
+import multiprocessing
+import resource
 import timeit
+import traceback
 from pathlib import Path
 
 import cupy
@@ -18,7 +21,23 @@ FRAMEWORKS = ["numpy", "torch", "jax", "cupy"]
 DEVICES = ["cpu", "gpu"]
 SKIP_XP_DEVICES = [("numpy", "gpu"), ("cupy", "cpu")]
 TIMEOUT = 60 * 5
+COMPILE_TIMEOUT = 60 * 60
 ROOT = Path(__file__).parent
+
+
+class CallTimeout(Exception):
+    """A single call took longer than the sweep's per size budget allows."""
+
+
+class CompileTimeout(Exception):
+    """Setup took longer than COMPILE_TIMEOUT, which on jax means XLA autotuning.
+
+    Note:
+        The budget is checked after setup returns. XLA compiles inside a C++ call that
+        defers Python signals until it finishes, so an in-flight compile cannot be
+        preempted from this process. Skipping the remaining sizes is what the budget
+        buys, not aborting the compile that overran it.
+    """
 
 
 def enable_float64():
@@ -108,15 +127,22 @@ def time_case(setup, test, repeat, number):
         number: Calls per sample. Timings are divided by it.
 
     Returns:
-        Array of `repeat` per-call times in seconds, empty if the case is too slow.
+        Array of `repeat` per-call times in seconds.
+
+    Raises:
+        CompileTimeout: Setup, which holds the jit warmup, blew the compile budget.
+        CallTimeout: One call would push the sweep of this size over TIMEOUT.
     """
+    start = timeit.default_timer()
     setup()
+    elapsed = timeit.default_timer() - start
+    if elapsed > COMPILE_TIMEOUT:
+        raise CompileTimeout(f"{elapsed:.0f}s")
     start = timeit.default_timer()
     test()
     elapsed = timeit.default_timer() - start
     if elapsed > TIMEOUT / (repeat * number):
-        print(f"  aborting: one call took {elapsed:.2f}s, over the {TIMEOUT}s budget")
-        return np.array([])
+        raise CallTimeout(f"{elapsed:.2f}s")
     timer = timeit.Timer(stmt=test, setup=setup)
     return np.array(timer.repeat(repeat=repeat, number=number)) / number
 
@@ -155,20 +181,125 @@ def save_result(mirror, variant, xp, device, fn, n_samples, timings, append=Fals
     path.write_text(json.dumps(results, indent=2))
 
 
+def peak_rss():
+    """Peak resident set size of this process in bytes, counted from its start."""
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
+
+
+def peak_device_bytes(xp, device):
+    """Peak device memory in bytes, or None where the framework does not report one.
+
+    Read from each framework's own allocator, since all three keep a pool that hides
+    the real usage from nvidia-smi. jax goes further and preallocates most of the card,
+    so only its in-use counter says anything.
+    """
+    if device == "cpu":
+        return None
+    if xp == "jax":
+        return jax.devices("gpu")[0].memory_stats()["peak_bytes_in_use"]
+    if xp == "torch":
+        return torch.cuda.max_memory_allocated()
+    if xp == "cupy":
+        return cupy.get_default_memory_pool().total_bytes()
+    return None
+
+
+def save_memory(mirror, variant, xp, device, fn, n_samples, rss, device_bytes):
+    """Merge one sample size into the memory file, keeping the other sizes."""
+    path = result_path(mirror, variant, xp, device, fn).with_suffix(".mem.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    usage = json.loads(path.read_text()) if path.exists() else {}
+    usage[str(int(n_samples))] = {"rss": rss, "device": device_bytes}
+    path.write_text(json.dumps(usage, indent=2))
+
+
+def save_skip(mirror, variant, xp, device, fn, n_samples, reason):
+    """Merge one sample size into the skip file, keeping the reasons of the others."""
+    path = result_path(mirror, variant, xp, device, fn).with_suffix(".skip.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    skips = json.loads(path.read_text()) if path.exists() else {}
+    skips[str(int(n_samples))] = reason
+    path.write_text(json.dumps(skips, indent=2))
+
+
 def _skip_reason(exc):
     """Why a case cannot run on this backend, or None if the error is a real bug."""
+    if isinstance(exc, CompileTimeout):
+        return f"compile timeout ({exc})"
+    if isinstance(exc, CallTimeout):
+        return f"call timeout ({exc})"
     if isinstance(exc, MemoryError) or "out of memory" in str(exc).lower():
         return "out of memory"
     if isinstance(exc, AttributeError | ValueError | TypeError):
         # A function that is not array API converted yet raises here, for instance by
         # calling np.asarray on a traced jax array.
-        return f"unsupported: {exc}"
+        return f"unsupported ({str(exc).splitlines()[0]})"
     return None
+
+
+def _child(mirror, fn, xp, device, n_samples, repeat, number, float64, conn):
+    """Time one case and report back over `conn`, as the entry point of a child process.
+
+    Sends ("result", {timings, rss, device}), ("skip", reason) for an error the sweep
+    can carry on past, or ("fatal", traceback) for one it cannot. The process is fresh,
+    so its peak memory is the peak of this measurement, minus what importing costs.
+    """
+    from scipy_bench import registry
+
+    if float64:
+        enable_float64()
+    try:
+        builder = registry.discover()[mirror][fn]
+        baseline = peak_rss()
+        setup, test, jax_test = builder(xp, device, n_samples)
+        timed = timed_call(xp, device, test, jax_test)
+        timings = time_case(setup, timed, repeat, number)
+        conn.send(("result", {
+            "timings": timings.tolist(),
+            "rss": peak_rss() - baseline,
+            "device": peak_device_bytes(xp, device),
+        }))
+    except Exception as exc:
+        reason = _skip_reason(exc)
+        conn.send(("skip", reason) if reason else ("fatal", traceback.format_exc()))
+    conn.close()
+
+
+def _measure(mirror, fn, xp, device, n_samples, repeat, number, float64):
+    """Time one case in a process we can kill, so a stuck compile cannot hang the sweep.
+
+    XLA compiles inside a C++ call that defers Python signals until it returns, so no
+    in-process timeout can interrupt one. Isolation also keeps a segfault or an
+    out-of-memory kill from taking the whole sweep down with it.
+
+    Returns:
+        The (result, reason) pair, of which exactly one is None. The result holds the
+        timings and the peak host and device memory of the measurement.
+    """
+    ctx = multiprocessing.get_context("spawn")
+    receiver, sender = ctx.Pipe(duplex=False)
+    args = (mirror, fn, xp, device, n_samples, repeat, number, float64, sender)
+    process = ctx.Process(target=_child, args=args)
+    process.start()
+    sender.close()  # the child holds the only writing end, so recv sees its death
+    budget = COMPILE_TIMEOUT + TIMEOUT
+    if not receiver.poll(budget):
+        process.kill()
+        process.join()
+        return None, f"hard timeout ({budget}s)"
+    try:
+        kind, payload = receiver.recv()
+    except EOFError:
+        process.join()
+        return None, f"crashed (exit {process.exitcode})"
+    process.join()
+    if kind == "fatal":
+        raise RuntimeError(f"{fn} on {xp} {device} n={n_samples}\n{payload}")
+    return (payload, None) if kind == "result" else (None, payload)
 
 
 def sweep(
     mirror,
-    cases,
     fns,
     frameworks,
     devices,
@@ -179,16 +310,18 @@ def sweep(
     variant,
     append=False,
     base=10,
+    float64=False,
 ):
     """Run cases across frameworks, devices and sample sizes, saving as we go.
 
-    A case that runs out of memory or hits an unsupported backend operation skips the
-    remaining, larger sample sizes for that framework and device.
+    Every size that produces no timings records why in a <fn>.skip.json beside them.
+    The first failure of a case stands for the larger sizes too, which are recorded as
+    skipped and not attempted, since they can only be harder.
 
     Args:
         mirror: Scipy module path of the suite, e.g. "spatial/distance".
-        cases: Mapping of case name to builder, from the registry.
-        fns: Case names to run.
+        fns: Case names to run. Each measurement rediscovers the builder in its own
+            process, so the sweep only needs the names.
         frameworks: Framework names to run.
         devices: Device names to run.
         low: Exponent of the smallest sample size.
@@ -199,30 +332,27 @@ def sweep(
         append: Add to the stored samples instead of replacing them, so repeated
             invocations accumulate across processes.
         base: Base the size exponents are taken to, 10 for decades, 2 for octaves.
+        float64: Ask the child processes to keep jax in float64.
     """
     for xp in frameworks:
         for fn in fns:
             for device in devices:
                 if (xp, device) in SKIP_XP_DEVICES:
                     continue
+                failure = None
                 for n_samples in sample_sizes(low, high, base):
                     print(f"{mirror}/{fn}: {xp} {device} n={n_samples}")
-                    try:
-                        setup, test, jax_test = cases[fn](xp, device, int(n_samples))
-                        timings = time_case(
-                            setup,
-                            timed_call(xp, device, test, jax_test),
-                            repeat,
-                            number,
-                        )
-                    except Exception as exc:
-                        reason = _skip_reason(exc)
-                        if reason is None:
-                            raise
+                    if failure is not None:
+                        save_skip(mirror, variant, xp, device, fn, n_samples, failure)
+                        continue
+                    result, reason = _measure(
+                        mirror, fn, xp, device, int(n_samples), repeat, number, float64
+                    )
+                    if reason is not None:
                         print(f"  SKIP {fn} on {xp} {device} - {reason}")
-                        break
-                    if len(timings) == 0:
-                        break
+                        save_skip(mirror, variant, xp, device, fn, n_samples, reason)
+                        failure = f"skipped after n={n_samples}: {reason}"
+                        continue
                     save_result(
                         mirror,
                         variant,
@@ -230,6 +360,16 @@ def sweep(
                         device,
                         fn,
                         n_samples,
-                        timings.tolist(),
+                        result["timings"],
                         append,
+                    )
+                    save_memory(
+                        mirror,
+                        variant,
+                        xp,
+                        device,
+                        fn,
+                        n_samples,
+                        result["rss"],
+                        result["device"],
                     )
