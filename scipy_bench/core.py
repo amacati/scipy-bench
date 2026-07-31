@@ -250,6 +250,11 @@ def _child(mirror, fn, xp, device, n_samples, repeat, number, float64, conn):
         enable_float64()
     try:
         builder = registry.discover()[mirror][fn]
+        # Frameworks init lazily, jax only reaching for its compiler on the first jit.
+        # Everything they set up for themselves belongs in the baseline, not the case.
+        warm = to_xp(xp, np.zeros(1), device)
+        if xp == "jax":
+            jax.block_until_ready(jax.jit(lambda a: -a)(warm))
         baseline = peak_rss()
         setup, test, jax_test = builder(xp, device, n_samples)
         timed = timed_call(xp, device, test, jax_test)
