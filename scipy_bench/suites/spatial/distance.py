@@ -242,9 +242,16 @@ def cdist(n_features, xp, device, n_samples):
 register("pdist", partial(pdist, N_FEATURES))
 register("cdist", partial(cdist, N_FEATURES))
 
-for _n_features in DIAGNOSTIC_DIMS:
-    register(f"pdist_d{_n_features}", partial(pdist, _n_features))
-    register(f"cdist_d{_n_features}", partial(cdist, _n_features))
+# A wider observation costs more at every count, so a dimension that fails rules out
+# the ones above it. pdist and cdist are not comparable this way: cdist does twice the
+# pair work, but pdist gathers its pairs into an array cdist never builds.
+for _easier, _n_features in zip([None, *DIAGNOSTIC_DIMS], DIAGNOSTIC_DIMS):
+    for _fn, _case in [(pdist, "pdist"), (cdist, "cdist")]:
+        register(
+            f"{_case}_d{_n_features}",
+            partial(_fn, _n_features),
+            harder_than=f"{_case}_d{_easier}" if _easier else None,
+        )
 
 
 @register

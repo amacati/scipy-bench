@@ -303,6 +303,25 @@ def _measure(mirror, fn, xp, device, n_samples, repeat, number, float64):
     return (payload, None) if kind == "result" else (None, payload)
 
 
+def _blocked(fn, n_samples, failures, dominated):
+    """Why this size need not be attempted, walking the chain of easier cases."""
+    case = fn
+    while case is not None:
+        failed = failures.get(case)
+        if failed is not None and n_samples >= failed[0]:
+            return f"skipped after {case} n={failed[0]}: {failed[1]}"
+        case = dominated.get(case)
+    return None
+
+
+def _depth(fn, dominated):
+    """How many cases `fn` dominates, so that easier ones are swept first."""
+    depth, case = 0, dominated.get(fn)
+    while case is not None:
+        depth, case = depth + 1, dominated.get(case)
+    return depth
+
+
 def sweep(
     mirror,
     fns,
@@ -316,12 +335,13 @@ def sweep(
     append=False,
     base=10,
     float64=False,
+    dominated=None,
 ):
     """Run cases across frameworks, devices and sample sizes, saving as we go.
 
-    Every size that produces no timings records why in a <fn>.skip.json beside them.
-    The first failure of a case stands for the larger sizes too, which are recorded as
-    skipped and not attempted, since they can only be harder.
+    Every size that produces no timings records why in a <fn>.skip.json beside them. A
+    failure stands for every size above it, and for the cases the suite declares harder
+    still, none of which are attempted.
 
     Args:
         mirror: Scipy module path of the suite, e.g. "spatial/distance".
@@ -338,17 +358,22 @@ def sweep(
             invocations accumulate across processes.
         base: Base the size exponents are taken to, 10 for decades, 2 for octaves.
         float64: Ask the child processes to keep jax in float64.
+        dominated: {case: the case it is harder than}, from the registry. The chains it
+            forms decide which cases a failure carries over to.
     """
+    dominated = dominated or {}
+    fns = sorted(fns, key=lambda fn: _depth(fn, dominated))
     for xp in frameworks:
-        for fn in fns:
-            for device in devices:
-                if (xp, device) in SKIP_XP_DEVICES:
-                    continue
-                failure = None
+        for device in devices:
+            if (xp, device) in SKIP_XP_DEVICES:
+                continue
+            failures = {}
+            for fn in fns:
                 for n_samples in sample_sizes(low, high, base):
                     print(f"{mirror}/{fn}: {xp} {device} n={n_samples}")
-                    if failure is not None:
-                        save_skip(mirror, variant, xp, device, fn, n_samples, failure)
+                    blocked = _blocked(fn, n_samples, failures, dominated)
+                    if blocked is not None:
+                        save_skip(mirror, variant, xp, device, fn, n_samples, blocked)
                         continue
                     result, reason = _measure(
                         mirror, fn, xp, device, int(n_samples), repeat, number, float64
@@ -356,7 +381,7 @@ def sweep(
                     if reason is not None:
                         print(f"  SKIP {fn} on {xp} {device} - {reason}")
                         save_skip(mirror, variant, xp, device, fn, n_samples, reason)
-                        failure = f"skipped after n={n_samples}: {reason}"
+                        failures[fn] = (n_samples, reason)
                         continue
                     save_result(
                         mirror,

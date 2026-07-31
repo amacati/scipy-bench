@@ -34,9 +34,10 @@ def _modules(module):
     return {m: cases[m] for m in mirrors}
 
 
-def _names(cases, fn):
-    assert fn is None or fn in cases, f"Unknown case {fn}, have {sorted(cases)}"
-    return [fn] if fn else sorted(cases)
+def _names(cases, fns):
+    unknown = set(fns or ()) - set(cases)
+    assert not unknown, f"Unknown cases {sorted(unknown)}, have {sorted(cases)}"
+    return list(fns) if fns else sorted(cases)
 
 
 def run(args):
@@ -56,6 +57,7 @@ def run(args):
             args.append,
             args.base,
             args.float64,
+            registry.dominated(mirror),
         )
 
 
@@ -96,7 +98,7 @@ def main():
         p = sub.add_parser(name, help=helptext)
         p.set_defaults(handler=handler)
         p.add_argument("--module", help="mirror path prefix, e.g. spatial/distance")
-        p.add_argument("--fn", help="single case name, default all")
+        p.add_argument("--fn", nargs="+", help="case names, default all")
         if name == "run":
             p.add_argument("--xp", choices=core.FRAMEWORKS, help="default all")
             p.add_argument("--device", choices=core.DEVICES, help="default both")
