@@ -12,12 +12,31 @@ import cupy
 import jax
 import numpy as np
 import torch
+from scipy._lib._array_api import array_namespace
 
 FRAMEWORKS = ["numpy", "torch", "jax", "cupy"]
 DEVICES = ["cpu", "gpu"]
 SKIP_XP_DEVICES = [("numpy", "gpu"), ("cupy", "cpu")]
 TIMEOUT = 60 * 5
 ROOT = Path(__file__).parent
+
+
+def enable_float64():
+    """Let jax keep float64 arrays, which it otherwise downcasts to float32."""
+    jax.config.update("jax_enable_x64", True)
+
+
+def check_float64(*arrays):
+    """Assert that arrays are float64, once float64 has been asked for.
+
+    Cases call this on the inputs they build and on the outputs of the function they
+    time, since jax narrows both to float32 without saying so.
+    """
+    if not jax.config.jax_enable_x64:
+        return
+    for array in arrays:
+        xp = array_namespace(array)
+        assert array.dtype == xp.float64, f"want float64, got {array.dtype}"
 
 
 def to_xp(xp, array, device):
@@ -102,9 +121,9 @@ def time_case(setup, test, repeat, number):
     return np.array(timer.repeat(repeat=repeat, number=number)) / number
 
 
-def sample_sizes(low, high):
-    """Sample sizes for a sweep, one per decade from 10**low to 10**high."""
-    sizes = np.logspace(low, high, high - low + 1).astype(int)
+def sample_sizes(low, high, base=10):
+    """Sample sizes for a sweep, one per power of `base` from base**low to base**high."""
+    sizes = np.logspace(low, high, high - low + 1, base=base).astype(int)
     return np.sort(np.array(sorted(set(sizes.tolist()))))
 
 
@@ -159,6 +178,7 @@ def sweep(
     number,
     variant,
     append=False,
+    base=10,
 ):
     """Run cases across frameworks, devices and sample sizes, saving as we go.
 
@@ -171,20 +191,21 @@ def sweep(
         fns: Case names to run.
         frameworks: Framework names to run.
         devices: Device names to run.
-        low: Log10 of the smallest sample size.
-        high: Log10 of the largest sample size.
+        low: Exponent of the smallest sample size.
+        high: Exponent of the largest sample size.
         repeat: Samples per sample size.
         number: Calls per sample.
         variant: Result tree to write into, "current" or "baseline".
         append: Add to the stored samples instead of replacing them, so repeated
             invocations accumulate across processes.
+        base: Base the size exponents are taken to, 10 for decades, 2 for octaves.
     """
     for xp in frameworks:
         for fn in fns:
             for device in devices:
                 if (xp, device) in SKIP_XP_DEVICES:
                     continue
-                for n_samples in sample_sizes(low, high):
+                for n_samples in sample_sizes(low, high, base):
                     print(f"{mirror}/{fn}: {xp} {device} n={n_samples}")
                     try:
                         setup, test, jax_test = cases[fn](xp, device, int(n_samples))

@@ -40,6 +40,8 @@ def _names(cases, fn):
 
 
 def run(args):
+    if args.float64:
+        core.enable_float64()
     for mirror, cases in _modules(args.module).items():
         core.sweep(
             mirror,
@@ -53,6 +55,7 @@ def run(args):
             args.number,
             args.variant,
             args.append,
+            args.base,
         )
 
 
@@ -97,8 +100,15 @@ def main():
         if name == "run":
             p.add_argument("--xp", choices=core.FRAMEWORKS, help="default all")
             p.add_argument("--device", choices=core.DEVICES, help="default both")
-            p.add_argument("--low", type=int, default=0, help="log10 smallest size")
-            p.add_argument("--high", type=int, default=7, help="log10 largest size")
+            p.add_argument("--low", type=int, default=0, help="smallest size exponent")
+            p.add_argument("--high", type=int, default=7, help="largest size exponent")
+            p.add_argument("--base", type=int, default=10, help="base of the exponents")
+            p.add_argument(
+                "--float64",
+                action="store_true",
+                help="keep jax in float64 instead of its default float32, so it is"
+                " timed at the same precision as the other frameworks",
+            )
             p.add_argument("--repeat", type=int, default=5, help="samples per size")
             p.add_argument("--number", type=int, default=100, help="calls per sample")
             p.add_argument(

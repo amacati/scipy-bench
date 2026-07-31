@@ -6,9 +6,13 @@ import jax
 import numpy as np
 from scipy.spatial import distance
 
-from scipy_bench import device_of, register, to_xp
+from scipy_bench import check_float64, device_of, register, to_xp
 
-N_FEATURES = 10  # feature dimension of the observation matrices of pdist and cdist
+# Feature dimension of the observation matrices of pdist and cdist. The main cases use
+# N_FEATURES, the diagnostic dimensions are registered as separate cases so each one is
+# swept over the full range of observation counts.
+N_FEATURES = 3
+DIAGNOSTIC_DIMS = [4, 16, 64, 256, 1024]
 
 # Pair metrics take two 1-D vectors and return a scalar. Scaling the vector length
 # measures the elementwise work an array API backend parallelizes. Each entry is
@@ -69,9 +73,11 @@ def create_vector(xp, device, n, dtype="float64"):
     return to_xp(xp, arr, device)
 
 
-def create_matrix(xp, device, m):
-    """Observation matrix of m observations with N_FEATURES features each."""
-    return to_xp(xp, np.random.rand(m, N_FEATURES), device)
+def create_matrix(xp, device, m, n_features):
+    """Observation matrix of m observations with n_features features each."""
+    X = to_xp(xp, np.random.rand(m, n_features), device)
+    check_float64(X)
+    return X
 
 
 def create_distance_matrix(xp, device, k):
@@ -190,41 +196,53 @@ def seuclidean(xp, device, n_samples):
     return setup, test, jax_test
 
 
-@register
-def pdist(xp, device, n_samples):
-    X = None
+def pdist(n_features, xp, device, n_samples):
+    X, jfn = None, None
 
     def setup():
-        nonlocal X
-        X = create_matrix(xp, device, n_samples)
+        nonlocal X, jfn
+        X = create_matrix(xp, device, n_samples, n_features)
         assert device_of(X) == device, f"setup on {device_of(X)}, want {device}"
+        if xp == "jax":
+            jfn = jax.jit(distance.pdist)
+            check_float64(jax.block_until_ready(jfn(X)))
 
     def test():
         return distance.pdist(X)
 
     def jax_test():
-        jax.block_until_ready(distance.pdist(X))
+        jax.block_until_ready(jfn(X))
 
     return setup, test, jax_test
 
 
-@register
-def cdist(xp, device, n_samples):
-    XA, XB = None, None
+def cdist(n_features, xp, device, n_samples):
+    XA, XB, jfn = None, None, None
 
     def setup():
-        nonlocal XA, XB
-        XA = create_matrix(xp, device, n_samples)
-        XB = create_matrix(xp, device, n_samples)
+        nonlocal XA, XB, jfn
+        XA = create_matrix(xp, device, n_samples, n_features)
+        XB = create_matrix(xp, device, n_samples, n_features)
         assert device_of(XA) == device, f"setup on {device_of(XA)}, want {device}"
+        if xp == "jax":
+            jfn = jax.jit(distance.cdist)
+            check_float64(jax.block_until_ready(jfn(XA, XB)))
 
     def test():
         return distance.cdist(XA, XB)
 
     def jax_test():
-        jax.block_until_ready(distance.cdist(XA, XB))
+        jax.block_until_ready(jfn(XA, XB))
 
     return setup, test, jax_test
+
+
+register("pdist", partial(pdist, N_FEATURES))
+register("cdist", partial(cdist, N_FEATURES))
+
+for _n_features in DIAGNOSTIC_DIMS:
+    register(f"pdist_d{_n_features}", partial(pdist, _n_features))
+    register(f"cdist_d{_n_features}", partial(cdist, _n_features))
 
 
 @register
