@@ -3,3 +3,4 @@ scipy_bench/plots/
 scipy_bench/reports/
 scipy_bench/prototypes/
 __pycache__/
+scipy_bench/studies/

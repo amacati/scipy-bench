@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from scipy.spatial.transform import Rotation as R
 
-from scipy_bench import device_of, register, to_xp
+from scipy_bench import device_of, float_dtype, register, to_xp
 
 from . import _pytree  # noqa: F401  registers Rotation and RigidTransform with jax
 
@@ -24,7 +24,7 @@ def jax_qp(n_samples, device):
 
 
 def random_data(xp, device, n_samples):
-    """Random quaternions and translation vectors, drawn natively per framework.
+    """Draw quaternions and translation vectors natively per framework.
 
     Args:
         xp: Framework name.
@@ -36,17 +36,23 @@ def random_data(xp, device, n_samples):
         translation batch, both resident on `device`. The quaternions are unnormalized.
     """
     if xp == "numpy":
-        return np.random.randn(n_samples, 4), np.random.rand(n_samples, 3)
+        return (
+            np.random.randn(n_samples, 4).astype(float_dtype()),
+            np.random.rand(n_samples, 3).astype(float_dtype()),
+        )
     if xp == "torch":
         dev = "cuda" if device == "gpu" else "cpu"
         return (
-            torch.randn(n_samples, 4, device=dev),
-            torch.rand(n_samples, 3, device=dev),
+            torch.randn(n_samples, 4, device=dev, dtype=getattr(torch, float_dtype())),
+            torch.rand(n_samples, 3, device=dev, dtype=getattr(torch, float_dtype())),
         )
     if xp == "jax":
         return jax_qp(n_samples, device)
     if xp == "cupy":
-        return cupy.random.randn(n_samples, 4), cupy.random.rand(n_samples, 3)
+        return (
+            cupy.random.randn(n_samples, 4, dtype=float_dtype()),
+            cupy.random.rand(n_samples, 3, dtype=float_dtype()),
+        )
     raise ValueError(f"Unknown framework {xp}")
 
 

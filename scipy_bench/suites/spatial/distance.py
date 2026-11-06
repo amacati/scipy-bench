@@ -8,76 +8,79 @@ from scipy.spatial import distance
 
 from scipy_bench import check_float64, device_of, register, to_xp
 
-# Feature dimension of the observation matrices of pdist and cdist. The main cases use
-# N_FEATURES, the diagnostic dimensions are registered as separate cases so each one is
-# swept over the full range of observation counts.
+# Features per row in pdist, cdist and the batched metrics. Each diagnostic dimension
+# is its own pdist and cdist case.
 N_FEATURES = 3
 DIAGNOSTIC_DIMS = [4, 16, 64, 256, 1024]
 
-# Pair metrics take two 1-D vectors and return a scalar. Scaling the vector length
-# measures the elementwise work an array API backend parallelizes. Each entry is
-# (callable, dtype, jittable).
-PAIR_SPECS = {
-    "euclidean": (distance.euclidean, "float64", True),
-    "sqeuclidean": (distance.sqeuclidean, "float64", True),
-    "cityblock": (distance.cityblock, "float64", True),
-    "chebyshev": (distance.chebyshev, "float64", True),
-    "minkowski": (partial(distance.minkowski, p=3), "float64", True),
-    "cosine": (distance.cosine, "float64", True),
-    "correlation": (distance.correlation, "float64", True),
-    "braycurtis": (distance.braycurtis, "float64", True),
-    "canberra": (distance.canberra, "float64", True),
-    "hamming": (distance.hamming, "float64", True),
-    "jensenshannon": (distance.jensenshannon, "float64", True),
-    "jaccard": (distance.jaccard, "bool", True),
-    "yule": (distance.yule, "bool", True),
-    "dice": (distance.dice, "bool", True),
-    "rogerstanimoto": (distance.rogerstanimoto, "bool", True),
-    "russellrao": (distance.russellrao, "bool", True),
-    "sokalsneath": (
-        distance.sokalsneath,
-        "bool",
-        False,
-    ),  # data-dependent guard, no jit
+# Metrics with optional weights, as (callable, "float" or "bool" inputs).
+WEIGHTED_METRICS = {
+    "euclidean": (distance.euclidean, "float"),
+    "sqeuclidean": (distance.sqeuclidean, "float"),
+    "cityblock": (distance.cityblock, "float"),
+    "chebyshev": (distance.chebyshev, "float"),
+    "minkowski": (partial(distance.minkowski, p=3), "float"),
+    "cosine": (distance.cosine, "float"),
+    "correlation": (distance.correlation, "float"),
+    "braycurtis": (distance.braycurtis, "float"),
+    "canberra": (distance.canberra, "float"),
+    "hamming": (distance.hamming, "float"),
+    "jaccard": (distance.jaccard, "bool"),
+    "yule": (distance.yule, "bool"),
+    "dice": (distance.dice, "bool"),
+    "rogerstanimoto": (distance.rogerstanimoto, "bool"),
+    "russellrao": (distance.russellrao, "bool"),
+    "sokalsneath": (distance.sokalsneath, "bool"),
 }
 
-# Validators take either a square distance matrix ("dm") or a condensed vector ("y").
-VALIDATOR_SPECS = {
+# Functions of a square distance matrix ("dm") or a condensed vector ("y")
+MATRIX_SPECS = {
     "is_valid_dm": (distance.is_valid_dm, "dm"),
     "num_obs_dm": (distance.num_obs_dm, "dm"),
     "is_valid_y": (distance.is_valid_y, "y"),
     "num_obs_y": (distance.num_obs_y, "y"),
+    "squareform": (distance.squareform, "y"),
 }
 
 
-def create_vector(xp, device, n, dtype="float64"):
-    """Random vector of length n.
+def create_array(xp, device, shape, kind="float"):
+    """Create a random array.
 
     Args:
         xp: Framework name.
         device: "cpu" or "gpu".
-        n: Vector length.
-        dtype: "bool" for the boolean metrics, any float dtype otherwise.
+        shape: Array shape.
+        kind: "float" or "bool".
 
     Returns:
-        The vector on `device`. Boolean vectors always contain a True and, from n = 2
-        on, also a False, so sokalsneath, yule, dice and russellrao stay defined.
+        The array on `device`. Boolean rows hold a True and, from length 2 on, a
+        False, so every boolean metric stays defined.
     """
-    if dtype == "bool":
-        arr = np.random.rand(n) > 0.5
-        arr[0] = True
-        if n > 1:
-            arr[1] = False
+    if kind == "bool":
+        arr = np.random.rand(*shape) > 0.5
+        arr[..., 0] = True
+        if shape[-1] > 1:
+            arr[..., 1] = False
     else:
-        arr = np.random.rand(n).astype(dtype)
+        arr = np.random.rand(*shape)
     return to_xp(xp, arr, device)
+
+
+def create_weights(xp, device, n_features):
+    """Create positive weights or variances, one per feature."""
+    return create_array(xp, device, (n_features,))
+
+
+def create_inverse_covariance(xp, device, n_features):
+    """Create a random symmetric positive definite inverse covariance."""
+    a = np.random.rand(n_features, n_features)
+    # Diagonally dominant, so positive definite without an O(n^3) Gram matrix
+    return to_xp(xp, (a + a.T) / 2 + n_features * np.eye(n_features), device)
 
 
 def create_matrix(xp, device, m, n_features):
     """Observation matrix of m observations with n_features features each."""
-    X = to_xp(xp, np.random.rand(m, n_features), device)
-    check_float64(X)
-    return X
+    return to_xp(xp, np.random.rand(m, n_features), device)
 
 
 def create_distance_matrix(xp, device, k):
@@ -98,102 +101,81 @@ def create_condensed(xp, device, n):
     return to_xp(xp, np.random.rand(max(m * (m - 1) // 2, 1)), device)
 
 
-def _pair_case(call, dtype, jittable):
-    """Case builder for a two-vector scalar metric, scaling the vector length."""
+def metric(call, kind, extra, batched, xp, device, n_samples):
+    """Build a case timing a metric, jitted on jax.
 
-    def build(xp, device, n_samples):
-        u, v = None, None
-        jfn = jax.jit(call) if xp == "jax" and jittable else None
+    Args:
+        call: The metric.
+        kind: Element kind of u and v, "float" or "bool".
+        extra: Keyword and builder of a third argument, or None.
+        batched: Whether u and v hold n_samples rows of N_FEATURES.
+    """
+    shape = (n_samples, N_FEATURES) if batched else (n_samples,)
+    u, v, kwargs = None, None, None
+    jfn = jax.jit(call) if xp == "jax" else None
 
-        def setup():
-            nonlocal u, v
-            u = create_vector(xp, device, n_samples, dtype)
-            v = create_vector(xp, device, n_samples, dtype)
-            assert device_of(u) == device, f"setup on {device_of(u)}, want {device}"
-            if jfn is not None:
-                jax.block_until_ready(jfn(u, v))
+    def setup():
+        nonlocal u, v, kwargs
+        u = create_array(xp, device, shape, kind)
+        v = create_array(xp, device, shape, kind)
+        kwargs = {} if extra is None else {extra[0]: extra[1](xp, device, shape[-1])}
+        assert device_of(u) == device, f"setup on {device_of(u)}, want {device}"
+        if xp == "jax":
+            check_float64(jax.block_until_ready(jfn(u, v, **kwargs)))
 
-        def test():
-            return call(u, v)
+    def test():
+        return call(u, v, **kwargs)
 
-        def jax_test():
-            jax.block_until_ready((jfn if jittable else call)(u, v))
+    def jax_test():
+        jax.block_until_ready(jfn(u, v, **kwargs))
 
-        return setup, test, jax_test
-
-    return build
+    return setup, test, jax_test
 
 
-def _validator_case(call, kind):
-    """Case builder for a validator, fed a distance matrix or a condensed vector."""
+# Weights only add work, so a failing plain metric rules out its weighted case
+for _name, (_call, _kind) in WEIGHTED_METRICS.items():
+    register(_name, partial(metric, _call, _kind, None, False))
+    register(
+        f"{_name}_w",
+        partial(metric, _call, _kind, ("w", create_weights), False),
+        harder_than=_name,
+    )
+    register(f"{_name}_batch", partial(metric, _call, _kind, None, True))
+
+# Metrics without weights. jensenshannon defaults to axis 0, the others reduce axis -1
+for _name, (_call, _extra) in {
+    "jensenshannon": (partial(distance.jensenshannon, axis=-1), None),
+    "seuclidean": (distance.seuclidean, ("V", create_weights)),
+    "mahalanobis": (distance.mahalanobis, ("VI", create_inverse_covariance)),
+}.items():
+    register(_name, partial(metric, _call, "float", _extra, False))
+    register(f"{_name}_batch", partial(metric, _call, "float", _extra, True))
+
+
+def matrix(call, kind, xp, device, n_samples):
+    """Build a case timing a function of a distance matrix, jitted on jax."""
     create = create_distance_matrix if kind == "dm" else create_condensed
-
-    def build(xp, device, n_samples):
-        data = None
-
-        def setup():
-            nonlocal data
-            data = create(xp, device, n_samples)
-            assert device_of(data) == device, (
-                f"setup on {device_of(data)}, not {device}"
-            )
-
-        def test():
-            return call(data)
-
-        def jax_test():
-            jax.block_until_ready(call(data))
-
-        return setup, test, jax_test
-
-    return build
-
-
-for _name, (_call, _dtype, _jittable) in PAIR_SPECS.items():
-    register(_name, _pair_case(_call, _dtype, _jittable))
-
-for _name, (_call, _kind) in VALIDATOR_SPECS.items():
-    register(_name, _validator_case(_call, _kind))
-
-
-@register
-def mahalanobis(xp, device, n_samples):
-    u, v, VI = None, None, None
+    data = None
+    jfn = jax.jit(call) if xp == "jax" else None
 
     def setup():
-        nonlocal u, v, VI
-        u = create_vector(xp, device, n_samples)
-        v = create_vector(xp, device, n_samples)
-        VI = to_xp(xp, np.random.rand(n_samples, n_samples), device)
-        assert device_of(u) == device, f"setup on {device_of(u)}, want {device}"
+        nonlocal data
+        data = create(xp, device, n_samples)
+        assert device_of(data) == device, f"setup on {device_of(data)}, want {device}"
+        if xp == "jax":
+            jax.block_until_ready(jfn(data))
 
     def test():
-        return distance.mahalanobis(u, v, VI)
+        return call(data)
 
     def jax_test():
-        jax.block_until_ready(distance.mahalanobis(u, v, VI))
+        jax.block_until_ready(jfn(data))
 
     return setup, test, jax_test
 
 
-@register
-def seuclidean(xp, device, n_samples):
-    u, v, V = None, None, None
-
-    def setup():
-        nonlocal u, v, V
-        u = create_vector(xp, device, n_samples)
-        v = create_vector(xp, device, n_samples)
-        V = create_vector(xp, device, n_samples)  # positive variances in [0, 1)
-        assert device_of(u) == device, f"setup on {device_of(u)}, want {device}"
-
-    def test():
-        return distance.seuclidean(u, v, V)
-
-    def jax_test():
-        jax.block_until_ready(distance.seuclidean(u, v, V))
-
-    return setup, test, jax_test
+for _name, (_call, _kind) in MATRIX_SPECS.items():
+    register(_name, partial(matrix, _call, _kind))
 
 
 def pdist(n_features, xp, device, n_samples):
@@ -252,21 +234,3 @@ for _easier, _n_features in zip([None, *DIAGNOSTIC_DIMS], DIAGNOSTIC_DIMS):
             partial(_fn, _n_features),
             harder_than=f"{_case}_d{_easier}" if _easier else None,
         )
-
-
-@register
-def squareform(xp, device, n_samples):
-    y = None
-
-    def setup():
-        nonlocal y
-        y = create_condensed(xp, device, n_samples)
-        assert device_of(y) == device, f"setup on {device_of(y)}, want {device}"
-
-    def test():
-        return distance.squareform(y)
-
-    def jax_test():
-        jax.block_until_ready(distance.squareform(y))
-
-    return setup, test, jax_test

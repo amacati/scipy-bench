@@ -108,8 +108,7 @@ def main():
             p.add_argument(
                 "--float64",
                 action="store_true",
-                help="keep jax in float64 instead of its default float32, so it is"
-                " timed at the same precision as the other frameworks",
+                help="build inputs in float64 on every framework instead of float32",
             )
             p.add_argument("--repeat", type=int, default=5, help="samples per size")
             p.add_argument("--number", type=int, default=100, help="calls per sample")

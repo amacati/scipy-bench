@@ -16,6 +16,19 @@ cd ~/repos/scipy
 
 Re-run it whenever `pixi.toml` is synced from main, which wipes the environment.
 
+## Environments
+
+`baseline` holds the latest scipy release, `main` a pinned commit of main and `local`
+the checkout at `~/repos/scipy`, rebuilt on import. All three share jax, torch and
+cupy. Move the `rev` in `pixi.toml` to measure a newer main. These run from this repo.
+
+```bash
+cd ~/repos/scipy-bench
+pixi run -e baseline bench run --module spatial/distance --variant baseline
+pixi run -e main     bench run --module spatial/distance --variant main
+pixi run -e main     bench report --module spatial/distance --variant baseline main
+```
+
 ## Commands
 
 All of them run from the scipy checkout, through `spin` so that the numbers come from
@@ -79,16 +92,12 @@ timings quietly end up in the same pile. Delete the directory first:
 `rm -rf scipy_bench/results/spatial/distance/xp`.
 
 **jax is not measured like the others.** Its cases are timed on a compiled function
-while the rest are timed on the plain python call, and jax works in single precision
-unless you turn x64 on. Comparing frameworks against each other is therefore rough.
-Comparing the same framework before and after a change is fine.
+while the rest are timed on the plain python call. Comparing frameworks against each
+other is therefore rough. Comparing the same framework before and after a change is fine.
 
 **Missing large sizes mean too slow, not skipped.** A case that would blow the five
 minute budget is dropped along with every larger size for that framework and device.
 The same happens when a backend runs out of memory or cannot run the function at all.
-
-**Sample size means different things.** Vector length for the scalar metrics, batch
-size for `pdist` and `cdist`, matrix side for the distance matrix checks.
 
 **Keep the machine quiet.** A compile or a test suite running alongside will show up in
 the timings, and nothing in the stored data says it happened.

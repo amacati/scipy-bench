@@ -6,7 +6,10 @@ subtle and the numbers on disk are only comparable while it holds.
 
 import json
 import multiprocessing
+import os
 import resource
+import signal
+import time
 import timeit
 import traceback
 from pathlib import Path
@@ -22,6 +25,7 @@ DEVICES = ["cpu", "gpu"]
 SKIP_XP_DEVICES = [("numpy", "gpu"), ("cupy", "cpu")]
 TIMEOUT = 60 * 5
 COMPILE_TIMEOUT = 60 * 60
+GPU_SETTLE = 10
 ROOT = Path(__file__).parent
 
 
@@ -41,15 +45,20 @@ class CompileTimeout(Exception):
 
 
 def enable_float64():
-    """Let jax keep float64 arrays, which it otherwise downcasts to float32."""
+    """Build every input in float64 and let jax keep it, instead of float32."""
     jax.config.update("jax_enable_x64", True)
+
+
+def float_dtype():
+    """Name of the float dtype inputs are built in."""
+    return "float64" if jax.config.jax_enable_x64 else "float32"
 
 
 def check_float64(*arrays):
     """Assert that arrays are float64, once float64 has been asked for.
 
-    Cases call this on the inputs they build and on the outputs of the function they
-    time, since jax narrows both to float32 without saying so.
+    Cases call this on the outputs of the function they time, since jax narrows them
+    to float32 without saying so.
     """
     if not jax.config.jax_enable_x64:
         return
@@ -59,7 +68,7 @@ def check_float64(*arrays):
 
 
 def to_xp(xp, array, device):
-    """Move a numpy array to `xp` on `device`.
+    """Move a numpy array to `xp` on `device`, casting floats to `float_dtype`.
 
     Args:
         xp: Framework name, one of FRAMEWORKS.
@@ -69,6 +78,8 @@ def to_xp(xp, array, device):
     Returns:
         The array in the framework's own type, resident on `device`.
     """
+    if array.dtype.kind == "f":
+        array = array.astype(float_dtype())
     if xp == "numpy":
         return array
     if xp == "torch":
@@ -246,6 +257,9 @@ def _child(mirror, fn, xp, device, n_samples, repeat, number, float64, conn):
     """
     from scipy_bench import registry
 
+    # Lead our own process group, so killing us takes the compiler subprocesses that
+    # XLA shells out to with us. ptxas otherwise outlives the timeout that killed us
+    os.setsid()
     if float64:
         enable_float64()
     try:
@@ -270,6 +284,15 @@ def _child(mirror, fn, xp, device, n_samples, repeat, number, float64, conn):
     conn.close()
 
 
+def _kill_group(process):
+    """Kill a child and everything it spawned, then reap it."""
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:  # it finished between the timeout and the signal
+        pass
+    process.join()
+
+
 def _measure(mirror, fn, xp, device, n_samples, repeat, number, float64):
     """Time one case in a process we can kill, so a stuck compile cannot hang the sweep.
 
@@ -289,8 +312,7 @@ def _measure(mirror, fn, xp, device, n_samples, repeat, number, float64):
     sender.close()  # the child holds the only writing end, so recv sees its death
     budget = COMPILE_TIMEOUT + TIMEOUT
     if not receiver.poll(budget):
-        process.kill()
-        process.join()
+        _kill_group(process)
         return None, f"hard timeout ({budget}s)"
     try:
         kind, payload = receiver.recv()
@@ -357,7 +379,7 @@ def sweep(
         append: Add to the stored samples instead of replacing them, so repeated
             invocations accumulate across processes.
         base: Base the size exponents are taken to, 10 for decades, 2 for octaves.
-        float64: Ask the child processes to keep jax in float64.
+        float64: Build inputs in float64 instead of float32.
         dominated: {case: the case it is harder than}, from the registry. The chains it
             forms decide which cases a failure carries over to.
     """
@@ -378,6 +400,14 @@ def sweep(
                     result, reason = _measure(
                         mirror, fn, xp, device, int(n_samples), repeat, number, float64
                     )
+                    if reason == "out of memory":
+                        # Every child claims most of the card, so one that has exited
+                        # but not yet been reclaimed starves its successor
+                        time.sleep(GPU_SETTLE)
+                        result, reason = _measure(
+                            mirror, fn, xp, device, int(n_samples), repeat, number,
+                            float64
+                        )
                     if reason is not None:
                         print(f"  SKIP {fn} on {xp} {device} - {reason}")
                         save_skip(mirror, variant, xp, device, fn, n_samples, reason)

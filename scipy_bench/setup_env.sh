@@ -31,9 +31,23 @@ then
   pixi add --manifest-path "$MANIFEST" --feature bench-plotting --no-install matplotlib
 fi
 
+# jaxlib 0.9.0 cuda129 build 200 segfaults while loading its PJRT plugin, which takes
+# the whole process down on the first jax call. The pin keeps the solve on a build that
+# runs on the GPU.
+if ! python3 - "$MANIFEST" <<'EOF'
+import sys, tomllib
+
+features = tomllib.load(open(sys.argv[1], "rb"))["feature"]
+sys.exit("jax-pin" not in features or "jaxlib" not in features["jax-pin"]["dependencies"])
+EOF
+then
+  echo "pinning jaxlib to a working cuda build"
+  pixi add --manifest-path "$MANIFEST" --feature jax-pin --no-install "jaxlib>=0.9.2"
+fi
+
 FEATURES=(
   build-deps run-deps test-deps test-cpu bench-common mkl sparse array_api_strict
-  jax-cuda torch-cuda marray cuda12 py-cuda cupy bench-plotting
+  jax-cuda torch-cuda marray cuda12 py-cuda cupy bench-plotting jax-pin
 )
 echo "declaring the all-frameworks environment"
 pixi workspace environment add --manifest-path "$MANIFEST" all-frameworks \

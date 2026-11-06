@@ -153,10 +153,6 @@ compilation never lands inside the timed region. This matters because `timeit` r
 setup once per repeat, which means jax recompiles once per repeat. The warmup is the
 only thing keeping that cost out of the measurement.
 
-Not every case is jitted. In the distance suite only the pair metrics are, and
-`sokalsneath` is deliberately excluded because it has a data dependent guard. jax
-numbers are therefore not uniformly jitted numbers, check the suite before comparing.
-
 ### The nonlocal contract
 
 `timeit` re-runs `setup` once per repeat, so the inputs are rebuilt for every repeat.
@@ -218,32 +214,6 @@ Missing large sizes in the data mean "too slow to measure", not "not run".
 
 Out of memory and unsupported backend operations also break the size sweep for that
 framework and device. This is why some cases have no data at all on some backends.
-
-### Dtype is not controlled
-
-This is the biggest interpretation trap in the suite. Inputs are built as float64
-numpy arrays. numpy, torch and cupy carry them through unchanged, jax downcasts them
-to float32 because jax x64 is off. A jax bar next to a numpy bar is single precision
-next to double precision. Cross-framework speedup claims taken from these numbers are
-comparing different precisions and are not valid on their own.
-
-The A/B comparison within one framework is unaffected, since both variants build the
-same inputs on the same backend.
-
-### What "sample size" means
-
-The stored key is the requested size, and it means something different per case.
-
-| case group | sample size |
-| --- | --- |
-| scalar pair metrics, `mahalanobis`, `seuclidean` | vector length |
-| `pdist`, `cdist` | observation count, at a fixed 10 features |
-| `is_valid_dm`, `num_obs_dm` | side of the square distance matrix |
-| `squareform`, `is_valid_y`, `num_obs_y` | requested condensed length |
-
-A requested condensed length is snapped to the nearest valid binomial length, since
-only those correspond to a real number of observations. The file records the requested
-size, not the realized one.
 
 ### Machine hygiene
 

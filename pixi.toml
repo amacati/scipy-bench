@@ -1,0 +1,57 @@
+[workspace]
+name = "scipy-bench"
+channels = ["conda-forge"]
+platforms = [{ platform = "linux-64", cuda = "12" }]
+
+[dependencies]
+python = "3.13.*"
+cuda-version = "12.9.*"
+# cupy does not support numpy 2.5 yet
+numpy = "<2.5"
+pytorch-gpu = "*"
+cupy = "*"
+matplotlib = "*"
+
+# From PyPI, because conda-forge jax depends on its own scipy, which would shadow the
+# scipy under test
+[pypi-dependencies]
+jax = { version = "*", extras = ["cuda12"] }
+
+# The latest scipy release, the reference the port is compared against
+[feature.baseline.pypi-dependencies]
+scipy = "==1.18.1"
+
+# Toolchain for building scipy from source
+[feature.build.dependencies]
+c-compiler = "*"
+cxx-compiler = "*"
+fortran-compiler = "*"
+libblas = { build = "*openblas" }
+openblas = "*"
+pkg-config = "*"
+
+# scipy main at a pinned commit. Move the pin to measure a newer main
+[feature.main.pypi-dependencies]
+scipy = { git = "https://github.com/scipy/scipy.git", rev = "c818f76bf5be4aa8418ddcc3f7915de457eb0754" }
+
+# The scipy checkout next to this repo, rebuilt on import so it follows the working tree.
+# The rebuild runs in this env, so the build requirements live here too
+[feature.local.dependencies]
+meson-python = ">=0.15.0"
+cython = ">=3.2.0"
+pybind11 = ">=2.13.2"
+pythran = ">=0.18.1"
+
+[feature.local.pypi-dependencies]
+scipy = { path = "../scipy", editable = true }
+
+[feature.local.pypi-options]
+no-build-isolation = ["scipy"]
+
+[environments]
+baseline = ["baseline"]
+main = ["build", "main"]
+local = ["build", "local"]
+
+[tasks]
+bench = "python scipy_bench/bench.py"
