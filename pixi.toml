@@ -8,9 +8,11 @@ python = "3.13.*"
 cuda-version = "12.9.*"
 # cupy does not support numpy 2.5 yet
 numpy = "<2.5"
-pytorch-gpu = "*"
+pytorch-gpu = "==2.14.1"
 cupy = "*"
 matplotlib = "*"
+# One BLAS for numpy in every env, so the envs differ only in scipy
+libblas = { build = "*openblas" }
 
 # From PyPI, because conda-forge jax depends on its own scipy, which would shadow the
 # scipy under test
@@ -26,7 +28,6 @@ scipy = "==1.18.1"
 c-compiler = "*"
 cxx-compiler = "*"
 fortran-compiler = "*"
-libblas = { build = "*openblas" }
 openblas = "*"
 pkg-config = "*"
 

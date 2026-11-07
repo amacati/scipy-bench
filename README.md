@@ -1,132 +1,77 @@
 # scipy-bench
 
-Benchmarks for the scipy array API port. Every case is timed on numpy, torch, jax and
-cupy, on cpu and gpu, over a sweep of sample sizes.
+Benchmarks for the scipy array API port. Each benchmark calls a scipy function with
+numpy, torch, jax and cupy arrays, on cpu and gpu, for input sizes from 1 to 10^7.
+This repo is separate from scipy, so you can switch branches in your scipy clone and
+run the same benchmarks on each branch.
 
-The harness lives outside the scipy checkout, so it stays put when you switch branches.
+## Benchmark a scipy release or main
 
-## Setup
+Each pixi environment in this repo installs a different scipy.
 
-Once per scipy checkout, to build the `all-frameworks` pixi environment:
+- `baseline` has the latest scipy release.
+- `main` has a fixed commit of scipy main. To benchmark a newer commit, change `rev`
+  under `feature.main` in `pixi.toml`.
+- `local` has your scipy clone in `../scipy`. See the next section.
 
-```bash
-cd ~/repos/scipy
-~/repos/scipy-bench/scipy_bench/setup_env.sh
-```
-
-Re-run it whenever `pixi.toml` is synced from main, which wipes the environment.
-
-## Environments
-
-`baseline` holds the latest scipy release, `main` a pinned commit of main and `local`
-the checkout at `~/repos/scipy`, rebuilt on import. All three share jax, torch and
-cupy. Move the `rev` in `pixi.toml` to measure a newer main. These run from this repo.
+`--variant` names the folder the timings are stored in. `report` compares the variants
+you pass to it.
 
 ```bash
 cd ~/repos/scipy-bench
 pixi run -e baseline bench run --module spatial/distance --variant baseline
 pixi run -e main     bench run --module spatial/distance --variant main
-pixi run -e main     bench report --module spatial/distance --variant baseline main
+pixi run -e main     bench report --module spatial/distance --variant main baseline
 ```
 
-## Commands
+## Benchmark your scipy branch
 
-All of them run from the scipy checkout, through `spin` so that the numbers come from
-the code you are standing on:
+The `local` environment builds your scipy clone in `../scipy`. Switch branches there
+and run the same command for each branch.
 
 ```bash
-cd ~/repos/scipy
-BENCH="pixi run -e all-frameworks spin run --build-dir=build-all-frameworks python $HOME/repos/scipy-bench/scipy_bench/bench.py"
+cd ~/repos/scipy && git switch main
+cd ~/repos/scipy-bench && pixi run -e local bench run --module spatial/distance --variant baseline
 
-$BENCH list                                          # what can be measured
-$BENCH run    --module spatial/distance --variant xp # measure
-$BENCH plot   --module spatial/distance --variant baseline xp
-$BENCH report --module spatial/distance --variant baseline xp
+cd ~/repos/scipy && git switch my-feature
+cd ~/repos/scipy-bench && pixi run -e local bench run --module spatial/distance --variant xp
+
+pixi run -e local bench report --module spatial/distance --variant xp baseline
 ```
 
-`--module` takes a path prefix, so `spatial` covers everything under it. `--fn` picks a
-single case. `report` draws the figures itself, so you only need `plot` if you want
-figures without a report.
+## Options and output
 
-Useful options for `run`:
+`bench list` shows all benchmark cases. `--module` selects cases by path, so `spatial`
+selects everything under `scipy.spatial`, and `--fn` selects cases by name. By default,
+`run` times sizes 10^0 to 10^7 with 5 repeats of 100 calls each. `bench run --help`
+lists all options.
 
-| option | default | |
-| --- | --- | --- |
-| `--xp` | all four | `numpy`, `torch`, `jax`, `cupy` |
-| `--device` | both | `cpu` or `gpu` |
-| `--low` / `--high` | 0 / 7 | smallest and largest size, as powers of ten |
-| `--repeat` | 5 | measurements per size |
-| `--variant` | `current` | which result set to write |
-| `--append` | off | add to the stored numbers instead of replacing them |
+`run` stores timings in `scipy_bench/results`. `report` writes a summary to
+`scipy_bench/reports` and figures to `scipy_bench/plots`. `plot` writes only the
+figures. The report compares the first variant against each later one, and a speedup
+above 1 means the first variant is faster. The figures draw the first variant dashed.
 
-## Comparing two versions
+## Pitfalls
 
-Measure the reference, measure the change, compare:
+**Run each benchmark several times.** All repeats of one size run in the same process,
+so they vary less than separate runs do. Between processes, timings differ by about 1
+percent on numpy cpu and 9 percent on jax gpu. Run the same command several times with
+`--append` to collect timings from separate processes.
 
-```bash
-git switch main
-$BENCH run --module spatial/distance --variant baseline
+**Delete old timings after you change code.** `run` keeps the stored timings of sizes
+it does not measure again, and `--append` adds to the stored timings. Delete
+`scipy_bench/results/<module>/<variant>` before you rerun, so old and new timings do
+not mix.
 
-git switch my-feature
-$BENCH run --module spatial/distance --variant xp
+**Compare frameworks only roughly.** jax is timed on a jit-compiled function, the
+other frameworks on the plain function call. Comparing one framework before and after
+a change is reliable.
 
-$BENCH report --module spatial/distance --variant baseline xp
-```
+**Missing sizes failed.** When a size takes too long, runs out of memory or is not
+supported, `run` skips it and all larger sizes for that framework and device. The
+reason is stored in a `.skip.json` file next to the timings.
 
-The order of `--variant` matters. The first is drawn dashed, the second solid, and the
-report divides the second into the first.
+**Do not run other work during a benchmark.** A compile or test suite running at the
+same time slows the benchmark down, and the stored timings do not show it.
 
-Results, figures and reports land next to the harness, under `scipy_bench/results`,
-`scipy_bench/plots` and `scipy_bench/reports`. None of them are committed.
-
-## Gotchas
-
-**One run proves very little.** Repeats inside a single run share a process and a warm
-cache, so they look far more consistent than reality. Running the same thing again in a
-fresh process moves the answer by about 1 percent on numpy cpu and about 9 percent on
-jax gpu. Anything smaller than that is not a result. Use `--append` and run the command
-several times to collect numbers across processes.
-
-**Wipe a variant when the code changed.** `--append` only ever adds, so old and new
-timings quietly end up in the same pile. Delete the directory first:
-`rm -rf scipy_bench/results/spatial/distance/xp`.
-
-**jax is not measured like the others.** Its cases are timed on a compiled function
-while the rest are timed on the plain python call. Comparing frameworks against each
-other is therefore rough. Comparing the same framework before and after a change is fine.
-
-**Missing large sizes mean too slow, not skipped.** A case that would blow the five
-minute budget is dropped along with every larger size for that framework and device.
-The same happens when a backend runs out of memory or cannot run the function at all.
-
-**Keep the machine quiet.** A compile or a test suite running alongside will show up in
-the timings, and nothing in the stored data says it happened.
-
-## Adding a case
-
-Put the module where it mirrors the scipy one, then register it. Discovery is
-automatic.
-
-```python
-from scipy_bench import register, to_xp
-
-@register
-def my_case(xp, device, n_samples):
-    data = None
-
-    def setup():
-        nonlocal data
-        data = to_xp(xp, np.random.rand(n_samples), device)
-
-    def test():
-        return scipy_function(data)
-
-    def jax_test():
-        jax.block_until_ready(scipy_function(data))
-
-    return setup, test, jax_test
-```
-
-`setup` runs again before every measurement, which is why it rebinds with `nonlocal`
-rather than returning the data. `scipy_bench/README.md` explains the timing rules in
-full, and is worth reading before trusting a number.
+`scipy_bench/README.md` explains how to add benchmarks and how they are timed.

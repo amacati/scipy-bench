@@ -1,11 +1,10 @@
 #!/usr/bin/env python
 r"""Single entry point for the scipy array API benchmarks.
 
-The benchmarks time the scipy you built, so they run through spin:
+Run it through the pixi `bench` task, for example:
 
-    pixi run -e all-frameworks spin run --build-dir=build-all-frameworks \
-        python ~/repos/scipy-bench/scipy_bench/bench.py run --module spatial/transform/rotation \
-        --fn as_rotvec --xp jax --device gpu --low 0 --high 5 --variant baseline
+    pixi run -e local bench run --module spatial/transform/rotation --fn as_rotvec \
+        --xp jax --device gpu --low 0 --high 5 --variant xp
 
 Run `bench.py --help` for the subcommands. Every path this writes mirrors the
 scipy module tree, so spatial/distance results land in results/spatial/distance.
@@ -19,8 +18,6 @@ import argparse  # noqa: E402
 import sys  # noqa: E402
 from pathlib import Path  # noqa: E402
 
-# Appended, not prepended: the repo root holds the scipy source tree, which would
-# shadow the built scipy that spin puts on the path ahead of us.
 sys.path.append(str(Path(__file__).parent.parent))
 
 from scipy_bench import core, registry  # noqa: E402
